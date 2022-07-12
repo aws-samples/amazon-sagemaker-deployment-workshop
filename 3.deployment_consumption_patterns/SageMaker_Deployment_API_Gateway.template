@@ -1,0 +1,227 @@
+{
+  "AWSTemplateFormatVersion":"2010-09-09",
+  "Description":"SageMaker deployment workshop API Gateway Lambda",
+  "Parameters":{
+    "SageMakerEndPointName": {
+      "Type" : "String",
+      "Description" : "Name of your SageMaker Endpoint"
+    }
+  },
+  "Resources":{
+    "lambdafunctionRole": {
+        "Type": "AWS::IAM::Role",
+        "Properties": {
+            "AssumeRolePolicyDocument": {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Principal": {
+                            "Service": ["lambda.amazonaws.com"]
+                        },
+                        "Action": ["sts:AssumeRole"]
+                    }
+                ]
+            },
+            "Path": "/"
+          }
+        },
+    "lambdafunctionRolePolicy": {
+          "Type": "AWS::IAM::Policy",
+          "Properties": {
+            "PolicyName": "lambda_sm_Function_Policy",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                  {
+                      "Action": [
+                        "logs:CreateLogGroup",
+                        "logs:CreateLogStream",
+                        "logs:PutLogEvents",
+                        "sagemaker:InvokeEndpoint"
+                      ],
+                      "Effect": "Allow",
+                      "Resource": ["arn:aws:logs:*:*:*",
+                      "arn:aws:sagemaker:*:*:*" ]
+                  }
+              ]
+            },
+          "Roles": [{ "Ref": "lambdafunctionRole"}]
+        }
+      },
+    "InvokeHFPytorchEndPoint": {
+    "Type": "AWS::Lambda::Function",
+    "Properties": {
+      "Code": {
+        "ZipFile":  { "Fn::Join": ["", [
+          "var AWS = require('aws-sdk');\n",
+          " \n",
+          "exports.handler = (event, context, callback) => {\n",
+          "        AWS.config.region = \"",{"Ref": "AWS::Region"},"\";\n",
+          "        var body;\n",
+          "        var sl= Math.floor(Math.random() * (8 * 10 - 0 * 10) + 0 * 10) / (1*10);\n",
+          "        var sw= Math.floor(Math.random() * (8 * 10 - 0 * 10) + 0 * 10) / (1*10);\n",
+          "        var pl= Math.floor(Math.random() * (8 * 10 - 0 * 10) + 0 * 10) / (1*10);\n",
+          "        var pw= Math.floor(Math.random() * (8 * 10 - 0 * 10) + 0 * 10) / (1*10);\n",
+          "        if (event.body !== null && event.body !== undefined) {\n",
+          "           body = event.body;\n",
+          "         } else {\n",
+          "             body = JSON.stringify(sl)+\"", ",", "\"+JSON.stringify(sw)+\"", ",", "\"+JSON.stringify(pl)+\"",  ",", "\"+JSON.stringify(pw);\n",
+          "         }\n",
+          "         var sagemakerruntime = new AWS.SageMakerRuntime();\n",
+          "         var params = {\n",
+          "             Body: body,\n",
+          "             EndpointName: \"",{"Ref": "SageMakerEndPointName"},"\",\n",
+          "             Accept: 'application/json',\n",
+          "             ContentType: 'application/json'\n",
+          "          };\n",
+          "          sagemakerruntime.invokeEndpoint(params, function(err, data) {\n",
+          "              if (err) {\n",
+          "                   console.log(err, err.stack); // an error occurred\n",
+          "                   callback(null, \n",
+          "                      {\n",
+          "                          statusCode: err.statusCode,\n",
+          "                          headers: {\n",
+          "                          'Content-Type': 'text/plain'\n",
+          "                          },\n",
+          "                          body: \"Error occurred\"\n",
+          "                      });  \n",
+          "                }\n",
+          "                  else     {\n",
+          "        //             callback(null, data.Body.toString('utf8'));\n",
+          "                    callback(null, \n",
+          "                  {\n",
+          "                      statusCode: 200,\n",
+          "                      headers: {\n",
+          "                      'Content-Type': 'text/plain'\n",
+          "                      },\n",
+          "                      body: data.Body.toString('utf8')\n",
+          "                  });\n",
+          "               }\n",
+          "               return\n",
+          "             });\n",
+          "};"
+        ]]}
+      },
+      "Handler": "index.handler",
+      "FunctionName": "InvokeHFPytorchEndPoint",
+      "Runtime": "nodejs12.x",
+      "Timeout": "30",
+      "Role": {"Fn::GetAtt": ["lambdafunctionRole", "Arn"]}
+    }
+    },
+    "HFPytorchAPI": {
+        "Type": "AWS::ApiGateway::RestApi",
+        "Properties": {
+          "Name": "HFPytorchAPI",
+          "Description": "API fronting Lambda function calling SageMaker HuggingFace Pytorch endpoint",
+          "FailOnWarnings" : true
+        }
+    },
+    "LambdaPermission": {
+        "Type": "AWS::Lambda::Permission",
+        "Properties": {
+          "Action": "lambda:invokeFunction",
+          "FunctionName": {"Fn::GetAtt": ["InvokeHFPytorchEndPoint", "Arn"]},
+          "Principal": "apigateway.amazonaws.com",
+          "SourceArn": {"Fn::Join": ["",
+            ["arn:aws:execute-api:", {"Ref": "AWS::Region"}, ":", {"Ref": "AWS::AccountId"}, ":", {"Ref": "HFPytorchAPI"}, "/*"]
+          ]}
+        }
+    },
+    "HFApiStage": {
+      "DependsOn" : ["ApiGatewayAccount"],
+      "Type": "AWS::ApiGateway::Stage",
+      "Properties": {
+        "DeploymentId": {"Ref": "ApiDeployment"},
+        "MethodSettings": [{
+          "DataTraceEnabled": true,
+          "HttpMethod": "*",
+          "LoggingLevel": "INFO",
+          "ResourcePath": "/*"
+        }],
+        "RestApiId": {"Ref": "HFPytorchAPI"},
+        "StageName": "LATEST"
+      }
+    },
+    "ApiGatewayCloudWatchLogsRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Effect": "Allow",
+            "Principal": { "Service": ["apigateway.amazonaws.com"] },
+            "Action": ["sts:AssumeRole"]
+          }]
+        },
+        "Policies": [{
+          "PolicyName": "ApiGatewayLogsPolicy",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [{
+              "Effect": "Allow",
+              "Action": [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:DescribeLogGroups",
+                "logs:DescribeLogStreams",
+                "logs:PutLogEvents",
+                "logs:GetLogEvents",
+                "logs:FilterLogEvents"
+              ],
+              "Resource": "*"
+            }]
+          }
+        }]
+      }
+    },
+    "ApiGatewayAccount": {
+      "Type" : "AWS::ApiGateway::Account",
+      "Properties" : {
+        "CloudWatchRoleArn" : {"Fn::GetAtt" : ["ApiGatewayCloudWatchLogsRole", "Arn"] }
+      }
+    },
+  "ApiDeployment": {
+      "Type": "AWS::ApiGateway::Deployment",
+      "DependsOn": ["HFRequest"],
+      "Properties": {
+        "RestApiId": {"Ref": "HFPytorchAPI"},
+        "StageName": "DummyStage"
+      }
+  },
+  "HFResource": {
+    "Type": "AWS::ApiGateway::Resource",
+    "Properties": {
+      "RestApiId": {"Ref": "HFPytorchAPI"},
+      "ParentId": {"Fn::GetAtt": ["HFPytorchAPI", "RootResourceId"]},
+      "PathPart": "HF"
+    }
+  },
+  "HFRequest": {
+    "DependsOn": "LambdaPermission",
+    "Type": "AWS::ApiGateway::Method",
+    "Properties": {
+      "AuthorizationType": "NONE",
+      "HttpMethod": "POST",
+      "Integration": {
+        "Type": "AWS_PROXY",
+        "IntegrationHttpMethod": "POST",
+        "Uri": {"Fn::Join" : ["",
+          ["arn:aws:apigateway:", {"Ref": "AWS::Region"}, ":lambda:path/2015-03-31/functions/", {"Fn::GetAtt": ["InvokeHFPytorchEndPoint", "Arn"]}, "/invocations"]
+        ]}
+      },
+      "MethodResponses": [{
+          "StatusCode": 200
+        }],
+      "ResourceId": {"Ref": "HFResource"},
+      "RestApiId": {"Ref": "HFPytorchAPI"}
+    }
+  }
+},
+  "Outputs":{
+    "APIGatewayEndPointURL":{
+      "Value": {"Fn::Join": ["", ["https://", {"Ref": "HFPytorchAPI"}, ".execute-api.", {"Ref": "AWS::Region"}, ".amazonaws.com"]]}
+    }
+  }
+}
