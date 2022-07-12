@@ -187,7 +187,7 @@
       "DependsOn": ["HFRequest"],
       "Properties": {
         "RestApiId": {"Ref": "HFPytorchAPI"},
-        "StageName": "DummyStage"
+        "StageName": "DevStage"
       }
   },
   "HFResource": {
