@@ -6,6 +6,7 @@ import boto3
 import time
 import json
 import datetime
+import tqdm
 
 region = boto3.Session().region_name
 sm_client = boto3.client("sagemaker", region)
@@ -16,14 +17,14 @@ def create_tar(tarfile_name: str, local_path: Path):
     """
     Create a tar.gz archive with the content of `local_path`.
     """
+    file_list = [k for k in local_path.glob("**/*.*") if f"{k.relative_to(local_path)}"[0] != "."]
     with tarfile.open(tarfile_name, mode="w:gz") as archive:
-        [
+        for k in (pbar := tqdm.tqdm(file_list, unit="files")):
+            pbar.set_description(f"{k}")
             archive.add(k, arcname=f"{k.relative_to(local_path)}")
-            for k in local_path.glob("**/*.*")
-            if f"{k.relative_to(local_path)}"[0] != "."
-        ]
     tar_size = Path(tarfile_name).stat().st_size / 10**6
     return tar_size
+
 
 def list_model_metadata_df():
     """
