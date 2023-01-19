@@ -18,8 +18,9 @@ def create_tar(tarfile_name: str, local_path: Path):
     Create a tar.gz archive with the content of `local_path`.
     """
     file_list = [k for k in local_path.glob("**/*.*") if f"{k.relative_to(local_path)}"[0] != "."]
+    pbar = tqdm.tqdm(file_list, unit="files")
     with tarfile.open(tarfile_name, mode="w:gz") as archive:
-        for k in (pbar := tqdm.tqdm(file_list, unit="files")):
+        for k in pbar:
             pbar.set_description(f"{k}")
             archive.add(k, arcname=f"{k.relative_to(local_path)}")
     tar_size = Path(tarfile_name).stat().st_size / 10**6
