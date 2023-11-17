@@ -1,0 +1,92 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Creating Async SageMaker Endpoint 
+
+Parameters:
+  ModelDataS3URLParameter:
+    Type: String 
+    Description: Enter the S3 Path of the Model Data
+  ModelImageParameter:
+    Type: String 
+    Description: Enter the Image URL for running the Model 
+  SuccessInvocationTopic:
+    Type: String 
+  FailedInvocationTopic:
+    Type: String 
+  AsyncEndpointS3Bucket:
+    Type: String 
+
+Resources:
+  SageMakerEndpoint: 
+    Type: AWS::SageMaker::Endpoint
+    Properties:
+      EndpointName: async-llm-demo-blip2-flan-endpoint
+      EndpointConfigName: !GetAtt SageMakerEndpointConfig.EndpointConfigName
+
+  SageMakerEndpointConfig:
+    Type: AWS::SageMaker::EndpointConfig
+    Properties:
+      EndpointConfigName: async-llm-demo-blip2-flan-endpoint-config
+      AsyncInferenceConfig: 
+        ClientConfig: 
+          MaxConcurrentInvocationsPerInstance: 2
+        OutputConfig: 
+          NotificationConfig: 
+            ErrorTopic: !Ref FailedInvocationTopic
+            SuccessTopic: !Ref SuccessInvocationTopic
+          S3FailurePath: !Sub s3://${AsyncEndpointS3Bucket}/blip2/failed
+          S3OutputPath: !Sub s3://${AsyncEndpointS3Bucket}/blip2/output
+      ProductionVariants:
+        - 
+          VariantName: AllTraffic
+          ModelName: !GetAtt SageMakerModel.ModelName
+          InitialInstanceCount: 1
+          InstanceType: ml.g5.2xlarge
+          InitialVariantWeight: 1.0
+
+  ModelExecutionRole: 
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: async-llm-demo-sagemaker-model-execution-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: sagemaker.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
+      Policies:
+        - PolicyName: ModelSNSPolicy 
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: 
+                  - !Ref SuccessInvocationTopic
+                  - !Ref FailedInvocationTopic
+        - PolicyName: S3Permissions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                  - s3:PutObject
+                Resource: !Sub "arn:aws:s3:::*${AsyncEndpointS3Bucket}*"
+
+  SageMakerModel:
+    Type: AWS::SageMaker::Model
+    Properties:
+      ModelName: async-llm-demo-blip2-flan-model
+      PrimaryContainer:
+        Image: !Ref ModelImageParameter
+        ModelDataUrl: !Ref ModelDataS3URLParameter
+      ExecutionRoleArn: !GetAtt ModelExecutionRole.Arn
+
+Outputs:
+  SageMakerEndpoint:
+    Value: !Ref SageMakerEndpoint

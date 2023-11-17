@@ -1,0 +1,219 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Resource Creation 
+
+Parameters:
+  ReadCapacityUnits:
+    Type: Number
+    Default: 10
+  WriteCapacityUnits:
+    Type: Number
+    Default: 10
+
+Resources:
+  AsyncEndpointDDBTable:
+    Type: AWS::DynamoDB::Table 
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: "inference_id"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "inference_id"
+          KeyType: "HASH"
+      BillingMode: PROVISIONED
+      TableName: "AsyncEndpointDDBTable"
+      ProvisionedThroughput:
+        ReadCapacityUnits: !Ref ReadCapacityUnits
+        WriteCapacityUnits: !Ref WriteCapacityUnits
+
+  AsyncEndpointS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub async-endpoint-with-llm-demo-${AWS::AccountId}
+
+  SuccessInvocationTopic:
+    Type: AWS::SNS::Topic 
+    Properties:
+      TopicName: async-llm-demo-sns-succeed
+      Subscription:
+        -
+          Endpoint: !GetAtt SuccessLambdaFunction.Arn
+          Protocol: lambda
+
+  SuccessLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt SuccessLambdaFunction.Arn
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref SuccessInvocationTopic
+
+  FailedInvocationTopic: 
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: async-llm-demo-sns-failed
+      Subscription:
+        -
+          Endpoint: !GetAtt FailedSLambdaFunction.Arn
+          Protocol: lambda
+
+  FailedLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt FailedSLambdaFunction.Arn
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref FailedInvocationTopic
+
+  LambdaRole: 
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Policies:
+        - PolicyName: LambdaSNSPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'sns:Publish'
+                  - 'sns:Subscribe'
+                Resource: 
+                  '*'
+                  # - !Ref SuccessInvocationTopic
+                  # - !Ref FailedInvocationTopic
+        - PolicyName: LambdaDDBPolicy  
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'dynamodb:PutItem'
+                  - 'dynamodb:UpdateItem'
+                  - 'dynamodb:GetItem'
+                Resource: !GetAtt AsyncEndpointDDBTable.Arn
+
+  SuccessLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: "Work with succeed invocation!"
+      FunctionName: async-endpoint-with-llm-demo-lambda-succeed
+      Handler: index.handler
+      Role: !GetAtt LambdaRole.Arn
+      Timeout: 360
+      Runtime: python3.10
+      Environment:
+        Variables: 
+           "TABLE_NAME" :  !Ref AsyncEndpointDDBTable
+      Code:
+        ZipFile: |
+          import os
+          import json
+          import boto3
+          from botocore.exceptions import ClientError
+          aws_region = boto3.Session().region_name
+          sagemaker_runtime = boto3.client("sagemaker-runtime", region_name=aws_region)
+          dynamodb = boto3.resource('dynamodb')
+          def lambda_handler(event, context):              
+              try:
+                  # Get the SNS message from the event
+                  sns_message = event['Records'][0]['Sns']
+                  # Parse the message body
+                  message = json.loads(sns_message['Message'])
+                  endpoint_name = message["requestParameters"]["endpointName"]
+                  inference_id = message["inferenceId"]
+                  input_location = message["requestParameters"]["inputLocation"]
+                  # content_type = message["requestParameters"]["contentType"]
+                  # accept = message["requestParameters"]["accept"]
+                  event_time = message["eventTime"]
+                  table_name = os.environ['TABLE_NAME']
+                  table = dynamodb.Table(table_name)
+                  key = {'inference_id': inference_id}
+                  # update_expression = 'SET success = :success'
+                  # expression_attribute_values = {':success': 'True'}             
+                  update_expression = 'SET success = :success, request_finish_time = :request_finish_time'
+                  expression_attribute_values = {
+                      ':success': 'True',
+                      ':request_finish_time': event_time
+                  }
+                  table.update_item(
+                      Key=key,
+                      UpdateExpression=update_expression,
+                      ExpressionAttributeValues=expression_attribute_values
+                  )
+              except KeyError:
+                  # Handle key not found
+                  return {
+                    "statusCode": 400,
+                    "body": json.dumps({"message": "Key 'key' not found in event"})
+                  }           
+              ######### Attention ##########
+              # currently, the verions of lambda function doesn't have the response["FailureLocation"]
+
+  FailedSLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: "Work with failed invocation!"
+      FunctionName:  async-endpoint-with-llm-demo-lambda-failed
+      Handler: index.handler
+      Role: !GetAtt LambdaRole.Arn
+      Timeout: 360
+      Runtime: python3.10
+      Environment:
+        Variables: 
+          "TABLE_NAME" :  !Ref AsyncEndpointDDBTable
+      Code:
+        ZipFile: |
+          import os
+          import json
+          import boto3
+          from botocore.exceptions import ClientError
+          aws_region = boto3.Session().region_name
+          sagemaker_runtime = boto3.client("sagemaker-runtime", region_name=aws_region)
+          dynamodb = boto3.resource('dynamodb')
+          def lambda_handler(event, context):          
+              try: 
+                  # Get the SNS message from the event
+                  sns_message = event['Records'][0]['Sns']
+                  # Parse the message body
+                  message = json.loads(sns_message['Message'])
+                  endpoint_name = message["requestParameters"]["endpointName"]
+                  inference_id = message["inferenceId"]
+                  input_location = message["requestParameters"]["inputLocation"]
+                  # content_type = message["requestParameters"]["contentType"]
+                  # accept = message["requestParameters"]["accept"]
+                  table_name = os.environ['TABLE_NAME']
+                  table = dynamodb.Table(table_name)
+                  key = {'inference_id': inference_id}
+                  update_expression = 'SET success = :success'
+                  expression_attribute_values = {':success': 'False'}
+                  table.update_item(
+                      Key=key,
+                      UpdateExpression=update_expression,
+                      ExpressionAttributeValues=expression_attribute_values
+                  )
+              except KeyError:
+                  # Handle key not found
+                  return {
+                    "statusCode": 400,
+                    "body": json.dumps({"message": "Key 'key' not found in event"})
+                  }
+              ######### Attention ##########
+              # currently, the verions of lambda function doesn't have the response["FailureLocation"]
+
+Outputs:
+  BucketName:
+    Value: !Ref AsyncEndpointS3Bucket
+  SuccessInvocationTopic:
+    Value: !Ref SuccessInvocationTopic
+  FailedInvocationTopic:
+    Value: !Ref SuccessInvocationTopic
+  AsyncEndpointDDBTable:
+    Value: !Ref AsyncEndpointDDBTable
