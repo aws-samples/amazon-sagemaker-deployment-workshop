@@ -87,6 +87,34 @@ Resources:
         ModelDataUrl: !Ref ModelDataS3URLParameter
       ExecutionRoleArn: !GetAtt ModelExecutionRole.Arn
 
+  ScalingTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MaxCapacity: 1
+      MinCapacity: 0
+      ResourceId: !Sub endpoint/${SageMakerEndpoint.EndpointName}/variant/AllTraffic
+      ScalableDimension: sagemaker:variant:DesiredInstanceCount
+      ServiceNamespace: sagemaker
+
+  ScalingPolicy:
+    Type: "AWS::ApplicationAutoScaling::ScalingPolicy"
+    Properties:
+      PolicyName: async-llm-demo-endpoint-scalable-policy
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref ScalingTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 5.0
+        ScaleInCooldown: 600
+        ScaleOutCooldown: 30
+        CustomizedMetricSpecification:
+            Dimensions: 
+            - 
+              Name: EndpointName
+              Value: !GetAtt SageMakerEndpoint.EndpointName
+            MetricName: ApproximateBacklogSizePerInstance
+            Namespace: AWS/SageMaker
+            Statistic: Average
+
 Outputs:
   SageMakerEndpoint:
     Value: !Ref SageMakerEndpoint

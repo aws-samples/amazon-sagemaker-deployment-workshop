@@ -77,6 +77,16 @@ Resources:
             Action:
               - 'sts:AssumeRole'
       Policies:
+        - PolicyName: LambdaExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: 'arn:aws:logs:*:*:*'
         - PolicyName: LambdaSNSPolicy
           PolicyDocument:
             Version: '2012-10-17'
@@ -105,7 +115,7 @@ Resources:
     Properties:
       Description: "Work with succeed invocation!"
       FunctionName: async-endpoint-with-llm-demo-lambda-succeed
-      Handler: index.handler
+      Handler: index.lambda_handler
       Role: !GetAtt LambdaRole.Arn
       Timeout: 360
       Runtime: python3.10
@@ -119,8 +129,7 @@ Resources:
           import boto3
           from botocore.exceptions import ClientError
           aws_region = boto3.Session().region_name
-          sagemaker_runtime = boto3.client("sagemaker-runtime", region_name=aws_region)
-          dynamodb = boto3.resource('dynamodb')
+          dynamodb = boto3.resource('dynamodb', region_name=aws_region)
           def lambda_handler(event, context):              
               try:
                   # Get the SNS message from the event
@@ -162,7 +171,7 @@ Resources:
     Properties:
       Description: "Work with failed invocation!"
       FunctionName:  async-endpoint-with-llm-demo-lambda-failed
-      Handler: index.handler
+      Handler: index.lambda_handler
       Role: !GetAtt LambdaRole.Arn
       Timeout: 360
       Runtime: python3.10
@@ -176,8 +185,7 @@ Resources:
           import boto3
           from botocore.exceptions import ClientError
           aws_region = boto3.Session().region_name
-          sagemaker_runtime = boto3.client("sagemaker-runtime", region_name=aws_region)
-          dynamodb = boto3.resource('dynamodb')
+          dynamodb = boto3.resource('dynamodb', region_name=aws_region)
           def lambda_handler(event, context):          
               try: 
                   # Get the SNS message from the event
